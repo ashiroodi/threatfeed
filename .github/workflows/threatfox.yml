@@ -1,14 +1,17 @@
 name: Update ThreatFox feed
 
-# When this runs:
 on:
   schedule:
-    - cron: "*/30 * * * *"      # every 30 minutes (UTC). GitHub may delay a few min.
-  workflow_dispatch: {}          # also lets you run it by hand from the Actions tab
+    - cron: "*/30 * * * *"      # every 30 minutes (UTC). GitHub may delay/skip under load.
+  workflow_dispatch: {}          # run manually from the Actions tab
 
-# Allow the workflow to commit back to the repo:
 permissions:
   contents: write
+
+# Stop overlapping runs from racing each other to push:
+concurrency:
+  group: threatfox-feed
+  cancel-in-progress: false
 
 jobs:
   update-feed:
@@ -31,10 +34,26 @@ jobs:
         run: |
           git config user.name  "threatfox-bot"
           git config user.email "actions@users.noreply.github.com"
+
+          # Nothing changed? Then there's nothing to do.
           if git diff --quiet -- threatfox.json; then
-            echo "No change in threatfox.json — nothing to commit."
-          else
-            git add threatfox.json
-            git commit -m "Update ThreatFox feed ($(date -u '+%Y-%m-%d %H:%M UTC'))"
-            git push
+            echo "No change in threatfox.json - nothing to commit."
+            exit 0
           fi
+
+          git add threatfox.json
+          git commit -m "Update ThreatFox feed ($(date -u '+%Y-%m-%d %H:%M UTC'))"
+
+          # Push, but if main moved while we were working, rebase onto it and retry.
+          # This fixes the '! [rejected] (fetch first)' race.
+          for attempt in 1 2 3; do
+            if git push; then
+              echo "push succeeded on attempt $attempt"
+              exit 0
+            fi
+            echo "push rejected (attempt $attempt) - syncing with remote and retrying..."
+            git pull --rebase --autostash origin main || true
+          done
+
+          echo "push still failing after retries" >&2
+          exit 1
