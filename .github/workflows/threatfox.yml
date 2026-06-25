@@ -1,0 +1,40 @@
+name: Update ThreatFox feed
+
+# When this runs:
+on:
+  schedule:
+    - cron: "*/30 * * * *"      # every 30 minutes (UTC). GitHub may delay a few min.
+  workflow_dispatch: {}          # also lets you run it by hand from the Actions tab
+
+# Allow the workflow to commit back to the repo:
+permissions:
+  contents: write
+
+jobs:
+  update-feed:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Pull IOCs from ThreatFox
+        env:
+          THREATFOX_AUTH_KEY: ${{ secrets.THREATFOX_AUTH_KEY }}
+        run: python pull_threatfox.py
+
+      - name: Commit threatfox.json if it changed
+        run: |
+          git config user.name  "threatfox-bot"
+          git config user.email "actions@users.noreply.github.com"
+          if git diff --quiet -- threatfox.json; then
+            echo "No change in threatfox.json — nothing to commit."
+          else
+            git add threatfox.json
+            git commit -m "Update ThreatFox feed ($(date -u '+%Y-%m-%d %H:%M UTC'))"
+            git push
+          fi
